@@ -1,0 +1,342 @@
+#include "weaveImage.h"
+
+WeaveImage::WeaveImage(SDL_Window *win, SDL_Renderer *renderer,
+                       const char *file, Uint32 numPins, Uint32 numLines) {
+  auto t1 = high_resolution_clock::now();
+  auto t2 = high_resolution_clock::now();
+  _pinOffset = 10;
+  _numPins = numPins;
+  _numLines = numLines;
+  _pinStride = _numPins - 2 * _pinOffset;
+  printf("\nStride %u:", _pinStride);
+  _win = win;
+  _renderer = renderer;
+  _file = file;
+  _surface = IMG_Load(file);
+  _texture = IMG_LoadTexture(_renderer, file);
+  SDL_QueryTexture(_texture, &_pixelFormat.format, nullptr, &_textRect.w,
+                   &_textRect.h);
+  _textRect.x = 0;
+  _textRect.y = 0;
+  int w, h;
+  SDL_GetWindowSize(_win, &w, &h);
+  _windowScale = (float)w / (float)_textRect.w;
+  SDL_RenderSetScale(_renderer, _windowScale, _windowScale);
+  _generatePoints();
+  _generatePinPairs();
+  std::cout << "Genrating Line indexes: " << std::endl;
+  t1 = high_resolution_clock::now();
+  _generateLinePixels();
+  t2 = high_resolution_clock::now();
+  /* Getting number of milliseconds as a double. */
+  duration<double, std::milli> ms_double = t2 - t1;
+  std::cout << ms_double.count() << "ms" << std::endl;
+  std::cout << "Genrating Grey: " << std::endl;
+  t1 = high_resolution_clock::now();
+  _convertToGreyInvert();
+  t2 = high_resolution_clock::now();
+  /* Getting number of milliseconds as a double. */
+  ms_double = t2 - t1;
+  std::cout << ms_double.count() << "ms" << std::endl << std::flush;
+  std::cout << "Grey_Size " << _greySurface[0].size() << " "
+            << _greySurface.size() << std::endl;
+
+  std::cout << "Get pin Sequence" << std::endl;
+  t1 = high_resolution_clock::now();
+  for (int i = 0; i < _pinLinePixels.size(); i++) {
+    std::cout << _pinPair[i].first << " "<< _pinPair[i].second<< " "  <<
+    _pinLinePixels[i].size() << std::endl;
+  }
+  _getPinSequence();
+  t2 = high_resolution_clock::now();
+  /* Getting number of milliseconds as a double. */
+  ms_double = t2 - t1;
+  std::cout << ms_double.count() << "ms" << std::endl << std::flush;
+}
+void WeaveImage::render(void) {
+  SDL_RenderCopy(_renderer, _texture, nullptr, &_textRect);
+  drawPins();
+  //_drawLines();
+}
+void WeaveImage::_generatePoints() {
+  SDL_Point pos;
+  float angleSteps = M_PI * 2 / _numPins;
+  float middle = _textRect.w / 2.0;
+  for (int i = 0; i < _numPins; i++) {
+    pos.x = cosf(i * angleSteps) * middle + middle;
+    pos.y = sinf(i * angleSteps) * middle + middle;
+    // printf("X:  %d Y: %d \n",pos.x,pos.y);
+    _pinPos.push_back(pos);
+  }
+}
+void WeaveImage::_generatePinPairs() {
+  _pinPair.reserve(_numPins * (_numPins - 2 * _pinOffset));
+  pinPair pair;
+  for (int i = 0; i < _numPins; i++) {
+    pair.second = addSaturate(i, _pinOffset, _numPins - 1);
+    for (int j = 0; j < _numPins - 2 * _pinOffset; j++) {
+      pair.first = i;
+      _pinPair.push_back(pair);
+      pair.second = addSaturate(pair.second, 1, _numPins - 1);
+    }
+  }
+}
+void WeaveImage::_generateLinePixels() {
+  _pinLinePixels.reserve(_pinPair.size());
+  //_pinLinePixels.resize(_pinPair.size());
+  Uint32 index = 0;
+
+  for (Uint32 i = 0; i < _pinPair.size(); i++) {
+    int x0 = _pinPos[_pinPair[i].first].x;
+    int y0 = _pinPos[_pinPair[i].first].y;
+    int x1 = _pinPos[_pinPair[i].second].x;
+    int y1 = _pinPos[_pinPair[i].second].y;
+    _pinLinePixels.push_back(_getLinePixel(x0, y0, x1, y1));
+    // std::cout<<"lineSixe: "<< _pinLinePixels[i].size()<<std::endl;
+  }
+
+  // for (vector<pinPair>::iterator it = _pinPair.begin(); it != _pinPair.end();
+  //      ++it) {
+  //   int x0 = _pinPos[it->first].x;
+  //   int y0 = _pinPos[it->first].y;
+  //   int x1 = _pinPos[it->two].x;
+  //   int y1 = _pinPos[it->two].y;
+
+  //   _pinLinePixels.push_back(_getLinePixel(x0, y0, x1, y1));
+  //  // _pinLinePixels[index] = (_getLinePixel(x0, y0, x1, y1));
+  //   index++;
+  // }
+  std::cout << "LinePixel size: " << _pinLinePixels.size() << std::endl;
+  std::cout << "PinPair size: " << _pinPair.size() << std::endl;
+}
+
+void WeaveImage::drawPins() {
+  for (vector<SDL_Point>::iterator it = _pinPos.begin(); it != _pinPos.end();
+       ++it) {
+    SDL_RenderDrawPoint(_renderer, it->x, it->y);
+  }
+}
+
+vector<SDL_Point> WeaveImage::_getLinePixel(int x0, int y0, int x1, int y1) {
+  vector<SDL_Point> result;
+  SDL_Point point;
+  int dx = abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
+  int dy = abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
+  int err = (dx > dy ? dx : -dy) / 2, e2;
+
+  for (;;) {
+    point.x = x0;
+    point.y = y0;
+    result.push_back(point);
+    if (x0 == x1 && y0 == y1)
+      break;
+    e2 = err;
+    if (e2 > -dx) {
+      err -= dy;
+      x0 += sx;
+    }
+    if (e2 < dy) {
+      err += dx;
+      y0 += sy;
+    }
+  }
+  return result;
+}
+void WeaveImage::_drawLines() {
+  for (int i = 0; i < 400; i++) {
+    SDL_Point *points = _pinLinePixels[i].data();
+    SDL_RenderDrawPoints(_renderer, points, _pinLinePixels[i].size());
+  }
+}
+void WeaveImage::_convertToGreyInvert() {
+  SDL_Surface *oriSurface = _surface;
+  _surface = SDL_ConvertSurfaceFormat(_surface, SDL_PIXELFORMAT_ARGB8888, 0);
+  Uint32 *pixels = (Uint32 *)_surface->pixels;
+  const int w = _surface->w;
+  const int h = _surface->h;
+  _greySurface.reserve(h);
+  //_greySurface.resize(w);
+  vector<Uint8> v1(w);
+
+  for (int i = 0; i < h; i++) {
+    for (int j = 0; j < w; j++) {
+      Uint8 b = *(pixels + i * w + j) & 0xFF;
+      v1[j] = 255 - b;
+    }
+    //_greySurface[i] = v1;
+    _greySurface.push_back(v1);
+  }
+  SDL_FreeSurface(oriSurface);
+}
+// THE EXTREMELY FAST LINE ALGORITHM Variation E (Addition Fixed Point PreCalc)
+vector<SDL_Point> WeaveImage::_getLinePixelF(int x, int y, int x2, int y2) {
+  SDL_Point point;
+  vector<SDL_Point> result;
+  bool yLonger = false;
+  int shortLen = y2 - y;
+  int longLen = x2 - x;
+  if (abs(shortLen) > abs(longLen)) {
+    int swap = shortLen;
+    shortLen = longLen;
+    longLen = swap;
+    yLonger = true;
+  }
+  int decInc;
+  if (longLen == 0)
+    decInc = 0;
+  else
+    decInc = (shortLen << 16) / longLen;
+  if (yLonger) {
+    if (longLen > 0) {
+      longLen += y;
+      for (int j = 0x8000 + (x << 16); y <= longLen; ++y) {
+        point.x = j >> 16;
+        point.y = y;
+        result.push_back(point);
+        // myPixel(surface,j >> 16,y);
+        j += decInc;
+      }
+      return result;
+    }
+    longLen += y;
+    for (int j = 0x8000 + (x << 16); y >= longLen; --y) {
+      // myPixel(surface,j >> 16,y);
+      point.x = j >> 16;
+      point.y = y;
+      result.push_back(point);
+      j -= decInc;
+    }
+    return result;
+  }
+
+  if (longLen > 0) {
+    longLen += x;
+    for (int j = 0x8000 + (y << 16); x <= longLen; ++x) {
+      // myPixel(surface,x,j >> 16);
+      point.x = x;
+      point.y = j >> 16;
+      result.push_back(point);
+      j += decInc;
+    }
+    return result;
+  }
+  longLen += x;
+  for (int j = 0x8000 + (y << 16); x >= longLen; --x) {
+    // myPixel(surface,x,j >> 16);
+    point.x = x;
+    point.y = j >> 16;
+    result.push_back(point);
+    j -= decInc;
+  }
+  return result;
+}
+// THE EXTREMELY FAST LINE ALGORITHM Variation E (Addition Fixed Point PreCalc)
+vector<SDL_Point> WeaveImage::_getLinePixelF2(int x, int y, int x2, int y2) {
+  SDL_Point point;
+  vector<SDL_Point> result;
+  bool yLonger = false;
+  int shortLen = y2 - y;
+  int longLen = x2 - x;
+  if (abs(shortLen) > abs(longLen)) {
+    int swap = shortLen;
+    shortLen = longLen;
+    longLen = swap;
+    yLonger = true;
+  }
+  int decInc;
+  if (longLen == 0)
+    decInc = 0;
+  else
+    decInc = (shortLen << 16) / longLen;
+
+  if (yLonger) {
+    if (longLen > 0) {
+      longLen += y;
+      for (int j = 0x8000 + (x << 16); y <= longLen; ++y) {
+        point.x = j >> 16;
+        point.y = y;
+        result.push_back(point);
+        j += decInc;
+      }
+      return result;
+    }
+    longLen += y;
+    for (int j = 0x8000 + (x << 16); y >= longLen; --y) {
+      point.x = j >> 16;
+      point.y = y;
+      result.push_back(point);
+      j -= decInc;
+    }
+    return result;
+  }
+
+  if (longLen > 0) {
+    longLen += x;
+    for (int j = 0x8000 + (y << 16); x <= longLen; ++x) {
+      point.x = x;
+      point.y = y >> 16;
+      result.push_back(point);
+      j += decInc;
+    }
+    return result;
+  }
+  longLen += x;
+  for (int j = 0x8000 + (y << 16); x >= longLen; --x) {
+    point.x = j >> 16;
+    point.y = y;
+    result.push_back(point);
+    j -= decInc;
+  }
+  return result;
+}
+void WeaveImage::_getPinSequence(void) {
+  // We start at random pin 0
+  Uint32 bestPin = 1;
+  _pinSequence.reserve(_numLines);
+  printf("Best pin %u\n", bestPin);
+  uint32_t bestIndex = _getBestPin(bestPin);
+   printf("Best pin %u\n", _pinPair[bestIndex].second);
+  // for (uint32_t i = 1; i < _numLines; i++) {
+  //   bestPin = _getBestPin(bestPin);
+  //   _pinSequence.push_back(bestPin);
+  //   std::cout << i << std::endl;
+  // }
+  // std::cout << _pinSequence.size() << std::endl;
+}
+Uint32 WeaveImage::_getBestPin(Uint32 pin) {
+  Uint32 index = pin * _pinStride;
+  float score;
+  Uint32 best_index = index;
+  float previousScore = 0;
+  // printf(" Dan best pin Score: %f: Index: %u \n", score, index);
+  for (Uint32 i = index; i < (index + _pinStride); i++) {
+    score = _getWeigth(_pinLinePixels[i]);
+    if (score >= previousScore) {
+      previousScore = score;
+      best_index = i;
+    }
+  }
+  // Ligthen the image
+  _ligthenImage(_pinLinePixels[best_index]);
+  return best_index;
+}
+
+float WeaveImage::_getWeigth(const vector<SDL_Point> &vect) {
+  Uint32 sum = 0;
+  for (int i = 0; i < vect.size(); i++) {
+    sum += _greySurface[vect[i].x][vect[i].y];
+  }
+  //  std::cout<<&vect<<std::endl;
+  return float(sum) / vect.size();
+}
+
+void WeaveImage::_ligthenImage(const vector<SDL_Point> &vect) {
+  Uint16 val;
+  for (int i = 0; i < vect.size(); i++) {
+    val = _greySurface[vect[i].x][vect[i].y];
+    val--;
+    if (val > 255)
+      val = 0;
+    _greySurface[vect[i].x][vect[i].y] = val;
+  }
+}

@@ -1,0 +1,5 @@
+# ninja log v5
+2	2870	1617553970924538480	CMakeFiles/weaver.dir/utils.cpp.o	6b1917c4333ac4cd
+2	5175	1617553973244673682	CMakeFiles/weaver.dir/mainWindow.cpp.o	49ba3306ddb7f84a
+0	5362	1617553973424684082	CMakeFiles/weaver.dir/main.cpp.o	a6b58f32c3561ae1
+2871	6755	1617553974824764679	CMakeFiles/weaver.dir/weaveImage.cpp.o	3d4ce0e4e2192cf5
